@@ -6,16 +6,24 @@ import os
 os.environ['NLS_LANG'] = 'SIMPLIFIED CHINESE_CHINA.UTF8'
 
 
-def sql_2_excel(filename, sql, db_str):
+def get_db(db_str):
     if db_str == 'scb5':
         db = create_engine('')
     elif db_str == 'scb6':
         db = create_engine('')
+    else:
+        db = None
+    return db
+
+
+def sql_2_excel(filename, sql, db_str):
+    db = get_db(db_str)
     t0 = time.time()
     df = pd.read_sql(sql, db)
     df.to_excel(filename, index=False)
     t1 = time.time()
-    print('cost ',t1 - t0)
+    print('cost ', t1 - t0)
+
 
 def excel_2_sql(filename, tablename, db_str):
     t0 = time.time()
@@ -23,18 +31,23 @@ def excel_2_sql(filename, tablename, db_str):
     t1 = time.time()
     print("read cost", (t1 - t0))
 
-    cols = []
-    dtype = {}
     if 'IDX' in df.columns or 'idx' in df.columns:
         pass
     else:
         df.index.rename('idx', inplace=True)
         df.reset_index(inplace=True)
+    df_2_sql(df, tablename, db_str)
+
+
+def df_2_sql(df, tablename, db_str):
+    t0 = time.time()
+    cols = []
+    dtype = {}
     for d in df.columns:
         s = re.sub(r'\W', '', str(d))
         if not s:
             s = 'blank'
-        if len(s) >= 10:
+        if len(s) > 10:
             s = s[:10]
         if re.search(r'^\d', s):
             s = 'a' + s
@@ -49,10 +62,7 @@ def excel_2_sql(filename, tablename, db_str):
             df[d] = df[d].astype(str)
             dtype[s] = String(1000)
     df.columns = cols
-    if db_str == 'scb5':
-        db = create_engine('')
-    elif db_str == 'scb6':
-        db = create_engine('')
+    db = get_db(db_str)
 
     try:
         db.execute('drop table ' + tablename + ' purge')
@@ -63,5 +73,5 @@ def excel_2_sql(filename, tablename, db_str):
         print("success:", tablename)
     except Exception as e:
         print(str(e))
-    t2 = time.time()
-    print("import cost", (t2 - t1))
+    t1 = time.time()
+    print("import cost", (t1 - t0))
