@@ -31,11 +31,8 @@ def excel_2_sql(filename, tablename, db_str):
     t1 = time.time()
     print("read cost", (t1 - t0))
 
-    if 'IDX' in df.columns or 'idx' in df.columns:
-        pass
-    else:
-        df.index.rename('idx', inplace=True)
-        df.reset_index(inplace=True)
+    df.reset_index(inplace=True)
+    df.rename({df.columns[0]: 'idx'}, axis=1, inplace=True)
     df_2_sql(df, tablename, db_str)
 
 
