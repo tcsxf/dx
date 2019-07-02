@@ -32,7 +32,7 @@ def excel_2_sql(filename, tablename, db_str):
     print("read cost", (t1 - t0))
 
     df.reset_index(inplace=True)
-    df.rename({df.columns[0]: 'idx'}, axis=1, inplace=True)
+    df.rename(columns={df.columns[0]: 'idx'}, inplace=True)
     df_2_sql(df, tablename, db_str)
 
 
