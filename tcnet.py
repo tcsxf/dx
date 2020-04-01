@@ -1,30 +1,45 @@
 import requests
-import re
-import json
 from bs4 import BeautifulSoup
-import os
+import re
 
 
 class NW():
-    def __init__(self, staff='600299', url='http://www.tc.net'):
-        # 模拟登陆cookie,根据staff从文件读取信息
-        sfile = os.path.join(os.path.dirname(__file__), 'staff')
-        with open(sfile, 'r') as f:
-            self.staff_list = json.load(f)
-        for staff_ in self.staff_list:
-            if staff_['nm'] == staff or staff_['staff'] == staff:
-                s = staff_
-                break
-        self.cookie = {
-            'tcdx_admin': 'id={0}&work_no={1}'.format(s['id'], s['staff'])
-        }
+    def __init__(self, staff='600299', staff_list=None, dls=False):
+        # 选择传参或者DB读取工号列表
+        if staff_list:
+            self.staff_list = staff_list
+        else:
+            self.staff_list = self.db_list()
+        self.staff = self.staff_list.get(staff)
+
+        # 选择内网或者代理商网址并模拟cookie
+        if dls:
+            self.url = 'http://10.148.251.144'
+            self.cookie = {'dx_dl': f'id={self.staff[3]}&work_no={staff}'}
+        else:
+            self.url = 'http://www.tc.net'
+            self.cookie = {'tcdx_admin': f'id={self.staff[2]}&work_no={staff}'}
         # 模拟浏览器头
         self.header = {
             'User-Agent': ('Mozilla/5.0 (Windows NT 6.1; WOW64) '
-                           'AppleWebKit/537.36 (KHTML, like Gecko'
-                           ') Chrome/69.0.3497.100 Safari/537.36')}
-        # url地址
-        self.url = url
+                           'AppleWebKit/537.36 (KHTML, like Gecko) '
+                           'Chrome/80.0.3987.132 Safari/537.36')}
+
+    def db_list(self):
+        # 从DB获取工号列表
+        import cx_Oracle
+        scb6 = cx_Oracle.connect('luyu', 'meafe123', 'tcscb6')
+        cur = scb6.cursor()
+        sql = cur.execute('''select staff_no,
+                                    staff_nm,
+                                    phone,
+                                    nwid,
+                                    dlsid
+                               from ly_sys_user_table''').fetchall()
+        staff_list = dict([[x[0], x[1:]] for x in sql])
+        cur.close()
+        scb6.close()
+        return staff_list
 
     def get_param(self, url):
         # 模拟cookie获取相应页面的2个关键值
@@ -41,7 +56,8 @@ class NW():
            shouid   个人事务接收信息ID
         '''
         rep = requests.get(f'{self.url}/grsw/shou/chakan.aspx?id={shouid}',
-                           cookies=self.cookie)
+                           cookies=self.cookie,
+                           headers=self.header)
         if re.search('查看信息', rep.text):
             return True
         else:
@@ -49,38 +65,41 @@ class NW():
 
     def nw_zhuanfa(self,
                    receivers,
+                   title,
+                   content,
                    shouid,
-                   fjid,
-                   title='',
-                   content='',):
+                   fjid=''):
         '''转发函数
            receivers  接收工号列表
-           shouid     个人事务接收信息ID
-           fjid       附件ID
            title      发送信息标题
            content    发送信息内容
+           shouid     个人事务接收信息ID
+           fjid       附件ID,字符串类型,多个ID以|分隔
         '''
         # 获取2个参数值
         v, e = self.get_param(f'{self.url}/grsw/shou/zhuanfa.aspx?id={shouid}')
         # 接收人列表
-        persons = []
-        for staff in self.staff_list:
-            if staff['staff'] in receivers or staff['nm'] in receivers:
-                persons.append('[{0}]{1};'.format(staff['staff'], staff['nm']))
+        persons = [f'[{x}]{self.staff_list.get(x)[0]}' for x in receivers]
         # 构造发送信息
-        files = {
-            '__VIEWSTATE': (None, v),
-            '__EVENTVALIDATION': (None, e),
-            'HiddenField2': (None, ''.join(persons)),
-            'TextBox2': (None, title),
-            'editor1$TextBox1': (None, content),
-            'Button1': (None, '发送'),
+        data = {
+            '__VIEWSTATE': v,
+            '__EVENTVALIDATION': e,
+            'HiddenField2': ';'.join(persons),
+            'TextBox2': title,
+            'editor1$TextBox1': content,
+            'Button1': '发 送'
         }
+        # 转发的附件ID，2个网址不同处理方式
         if fjid:
-            files['fjid_%s' % fjid] = (None, fjid)
+            fjlist = fjid.split('|')
+            if self.url == 'http://www.tc.net':
+                for f in fjlist:
+                    data[f'fjid_{f}'] = f
+            else:
+                data['fj_id'] = fjlist
         # 转发信息
         rep = requests.post(f'{self.url}/grsw/shou/zhuanfa.aspx?id={shouid}',
-                            files=files,
+                            data=data,
                             cookies=self.cookie,
                             headers=self.header)
         if re.search('发送成功', rep.text):
@@ -90,9 +109,9 @@ class NW():
 
     def nw_fa(self,
               receivers,
-              title='',
-              content='',
-              filename=None,):
+              title,
+              content,
+              filename=''):
         '''发送函数
            receivers  接收工号列表
            title      发送信息标题
@@ -101,30 +120,27 @@ class NW():
         '''
         # 获取2个参数值
         v, e = self.get_param(f'{self.url}/grsw/fa/add.aspx')
+        # 接收人列表
+        persons = [f'[{x}]{self.staff_list.get(x)[0]}' for x in receivers]
+        # 构造发送信息
+        post_data = {
+            '__VIEWSTATE': v,
+            '__EVENTVALIDATION': e,
+            'HiddenField2': ';'.join(persons),
+            'TextBox2': title,
+            'editor1$TextBox1': content,
+            'Button1': '发 送'
+        }
         # 读取发送文件
         if filename:
             with open(filename, 'rb') as f:
-                file = f.read()
+                file = {'undefined': (filename, f.read())}
         else:
             file = ''
-        # 接收人列表
-        persons = []
-        for staff in self.staff_list:
-            if staff['staff'] in receivers or staff['nm'] in receivers:
-                persons.append('[{0}]{1};'.format(staff['staff'], staff['nm']))
-        # 构造发送信息
-        files = {
-            '__VIEWSTATE': (None, v),
-            '__EVENTVALIDATION': (None, e),
-            'HiddenField2': (None, ''.join(persons)),
-            'TextBox2': (None, title),
-            'editor1$TextBox1': (None, content),
-            'Button1': (None, '发送'),
-            'file_1': (filename, file)
-        }
         # 发送信息
         rep = requests.post(f'{self.url}/grsw/fa/add.aspx',
-                            files=files,
+                            data=post_data,
+                            files=file,
                             cookies=self.cookie,
                             headers=self.header)
         if re.search('发送成功', rep.text):
